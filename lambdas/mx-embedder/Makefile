@@ -3,11 +3,16 @@ FN_AWS_NAME='img-emb-test'
 FN_FILE_NAME='lambda_function.py'
 ZIP_NAME='function.zip'
 
+pip_args := install \
+		--platform manylinux1_x86_64 \
+		--only-binary=:all: \
+		--target . 
+
 install-libs:
 	mkdir -p package \
 	&& cd package \
-	&& pip install mxnet --target . \
-	&& pip install Pillow --target .
+	&& pip ${pip_args} mxnet \
+	&& pip ${pip_args} Pillow
 
 build:
 	cd package \

@@ -7,28 +7,47 @@ import numpy as np
 import boto3
 import json
 from PIL import Image
+from decimal import Decimal
 
 W = 224
 H = 224
 
 s3 = boto3.client('s3')
+dynamodb = boto3.resource('dynamodb')
 
 
-def get_model():
+def get_model(
+        model_name='densenet121',
+        tap='model_flatten0_flatten0_output',
+        tmpdir='/tmp/gluon',
+        ):
     ctx = mx.cpu()
-    model = vision.densenet121(pretrained=True, ctx=ctx,
-                               prefix='model_',
-                               root='/tmp/gluon')
+    model = getattr(vision, model_name)(
+            pretrained=True, ctx=ctx,
+            prefix='model_',
+            root=tmpdir)
 
     inputs = mx.sym.var('data')
     out = model(inputs)
     internals = out.get_internals()
 
-    outputs = [internals['model_flatten0_flatten0_output']]
+    outputs = [internals[tap]]
     feat_model = gluon.SymbolBlock(
         outputs, inputs, params=model.collect_params())
 
     return feat_model
+
+
+def write_repr(img_id, repr_vec):
+    table = dynamodb.Table('img-reprs')
+    item = {
+            'id': img_id,
+            'repr': repr_vec,
+            'meta': {
+                'ts_updated': datetime.utcnow().isoformat(),
+            }
+        }
+    response = table.put_item(Item=item)
 
 
 def lambda_handler(event, context):
@@ -67,6 +86,11 @@ def lambda_handler(event, context):
     feats = feat_model(img)
 
     print(feats)
+    feats_compat = [Decimal(str(x)) 
+            for x in feats.squeeze().asnumpy().tolist()]
+
+    print('Writing reprs to db...')
+    write_repr(key_base, feats_compat)
 
     print(f'[{datetime.now()-tic}] Returning!')
     return {
