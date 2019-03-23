@@ -15,6 +15,10 @@ H = 224
 s3 = boto3.client('s3')
 dynamodb = boto3.resource('dynamodb')
 
+DYNAMO_TABLE = 'img-reprs'
+DEFAULT_BUCKET = 'jason-garbage'
+DEFAULT_PREFIX = 'images'
+
 
 def get_model(
         model_name='densenet121',
@@ -43,7 +47,7 @@ feat_model = get_model()
 
 
 def write_repr(img_id, repr_vec):
-    table = dynamodb.Table('img-reprs')
+    table = dynamodb.Table(DYNAMO_TABLE)
     item = {
             'id': img_id,
             'repr': repr_vec,
@@ -114,9 +118,7 @@ def process_record(record):
         img_ids.append(key_base)
     elif is_cw_trigger(record):
         print('Scheduled CW event trigger')
-        bucket = 'jason-garbage'
-        prefix = 'images/'
-        resp = s3.list_objects(Bucket=bucket, Prefix=prefix)
+        resp = s3.list_objects(Bucket=DEFAULT_BUCKET, Prefix=DEFAULT_PREFIX)
         for k in resp['Contents']:
             if k['Size'] > 0:
                 key = Path(k['Key'])
@@ -125,7 +127,7 @@ def process_record(record):
                 path_data = f's3://{bucket}/{key}'
                 print(f'Path: {path_data}')
 
-                img = get_s3_img(bucket, key)
+                img = get_s3_img(DEFAULT_BUCKET, key)
                 imgs.append(img)
                 img_ids.append(key_base)
     else:
