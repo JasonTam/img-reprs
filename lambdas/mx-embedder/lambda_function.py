@@ -1,5 +1,3 @@
-from pathlib import Path
-from datetime import datetime
 import mxnet as mx
 from mxnet import gluon, nd
 from mxnet.gluon.model_zoo import vision
@@ -7,6 +5,8 @@ import numpy as np
 import boto3
 import json
 from PIL import Image
+from pathlib import Path
+from datetime import datetime
 from decimal import Decimal
 
 W = 224
@@ -32,10 +32,14 @@ def get_model(
     internals = out.get_internals()
 
     outputs = [internals[tap]]
-    feat_model = gluon.SymbolBlock(
+    model_trunc = gluon.SymbolBlock(
         outputs, inputs, params=model.collect_params())
 
-    return feat_model
+    return model_trunc
+
+
+print('Getting and cutting model...')
+feat_model = get_model()
 
 
 def write_repr(img_id, repr_vec):
@@ -48,23 +52,10 @@ def write_repr(img_id, repr_vec):
             }
         }
     response = table.put_item(Item=item)
+    return response
 
 
-def lambda_handler(event, context):
-    tic = datetime.now()
-
-    # `s3:ObjectCreated:Put` can only ever create 1 record. Take head.
-    bucket = event['Records'][0]['s3']['bucket']['name']
-    key = Path(event['Records'][0]['s3']['object']['key'])
-    key_name = key.name  # ex) 'cat.jpg'
-    key_base = key.stem
-    path_data = f's3://{bucket}/{key}'
-    print(f'Bucket: {bucket}')
-    print(f'Key: {key}', '\t', f'Key name: {key_name}')
-    print(f'Path: {path_data}')
-
-    print(f'[{datetime.now()-tic}] Streaming in image from S3...')
-
+def get_s3_img(bucket, key):
     response = s3.get_object(Bucket=bucket, Key=str(key))
     img_orig = Image.open(response['Body'])
     print('img_orig size: ', img_orig.size)
@@ -76,21 +67,53 @@ def lambda_handler(event, context):
     img = mx.nd.array(img_arr)
     img = mx.image.imresize(img, W, H)  # resize
     img = img.transpose((2, 0, 1))  # Channel first
-    img = img.expand_dims(axis=0)  # batchify
     img = img.astype('float32')  # for gpu context
+    return img
 
-    print('Getting and cutting model...')
-    feat_model = get_model()
+
+def is_s3_trigger(record):
+    return record['eventSource'] == 'aws:s3' and \
+           record['eventName'] == 'ObjectCreated:Put'
+
+
+def process_record(record):
+    img_ids = []
+    imgs = []
+    if is_s3_trigger(record):
+        bucket = record['s3']['bucket']['name']
+        key = Path(record['s3']['object']['key'])
+        key_name = key.name  # ex) 'cat.jpg'
+        key_base = key.stem  # ex) 'cat'
+        path_data = f's3://{bucket}/{key}'
+        print(f'Bucket: {bucket}')
+        print(f'Key: {key}', '\t', f'Key name: {key_name}')
+        print(f'Path: {path_data}')
+
+        print(f'Streaming in image from S3...')
+        img = get_s3_img(bucket, key)
+        imgs.append(img)
+        img_ids.append(key_base)
+    else:
+        raise ValueError('Only s3 trigger supported')
 
     print('Forward Inference...')
-    feats = feat_model(img)
+    feats = feat_model(nd.stack(*imgs, axis=0))
 
-    print(feats)
-    feats_compat = [Decimal(str(x)) 
+    for img_id, feat in zip(img_ids, feats):
+        # Consider batch write if we actually have huge batches
+        feats_compat = [
+            Decimal(str(x))
             for x in feats.squeeze().asnumpy().tolist()]
+        print('Writing reprs to db...')
+        resp = write_repr(img_id, feats_compat)
 
-    print('Writing reprs to db...')
-    write_repr(key_base, feats_compat)
+
+def lambda_handler(event, context):
+    tic = datetime.now()
+
+    for record in event['Records']:
+        # Note: typically, there is only 1 record
+        process_record(record)
 
     print(f'[{datetime.now()-tic}] Returning!')
     return {
