@@ -71,9 +71,28 @@ def get_s3_img(bucket, key):
     return img
 
 
+def process_imgs(imgs, img_ids):
+    print('Forward Inference...')
+    feats = feat_model(nd.stack(*imgs, axis=0))
+    resps = []
+    for img_id, feat in zip(img_ids, feats):
+        # Consider batch write if we actually have huge batches
+        feat_compat = [
+            Decimal(str(x))
+            for x in feat.squeeze().asnumpy().tolist()]
+        print('Writing reprs to db...')
+        resp = write_repr(img_id, feat_compat)
+        resps.append(resp)
+    return resps
+
+
 def is_s3_trigger(record):
-    return record['eventSource'] == 'aws:s3' and \
-           record['eventName'] == 'ObjectCreated:Put'
+    return record.get('eventSource') == 'aws:s3' and \
+           record.get('eventName') == 'ObjectCreated:Put'
+
+
+def is_cw_trigger(event):
+    return event.get('source') == 'aws.events'
 
 
 def process_record(record):
@@ -93,27 +112,37 @@ def process_record(record):
         img = get_s3_img(bucket, key)
         imgs.append(img)
         img_ids.append(key_base)
+    elif is_cw_trigger(record):
+        print('Scheduled CW event trigger')
+        bucket = 'jason-garbage'
+        prefix = 'images/'
+        resp = s3.list_objects(Bucket=bucket, Prefix=prefix)
+        for k in resp['Contents']:
+            if k['Size'] > 0:
+                key = Path(k['Key'])
+                key_name = key.name  # ex) 'cat.jpg'
+                key_base = key.stem  # ex) 'cat'
+                path_data = f's3://{bucket}/{key}'
+                print(f'Path: {path_data}')
+
+                img = get_s3_img(bucket, key)
+                imgs.append(img)
+                img_ids.append(key_base)
     else:
-        raise ValueError('Only s3 trigger supported')
+        raise ValueError('Only s3 records supported')
 
-    print('Forward Inference...')
-    feats = feat_model(nd.stack(*imgs, axis=0))
-
-    for img_id, feat in zip(img_ids, feats):
-        # Consider batch write if we actually have huge batches
-        feats_compat = [
-            Decimal(str(x))
-            for x in feats.squeeze().asnumpy().tolist()]
-        print('Writing reprs to db...')
-        resp = write_repr(img_id, feats_compat)
+    process_imgs(imgs, img_ids)
 
 
 def lambda_handler(event, context):
     tic = datetime.now()
 
-    for record in event['Records']:
-        # Note: typically, there is only 1 record
-        process_record(record)
+    if 'Records' in event:
+        for record in event['Records']:
+            # Note: typically, there is only 1 record
+            process_record(record)
+    elif is_cw_trigger(event):
+        process_record(event)
 
     print(f'[{datetime.now()-tic}] Returning!')
     return {
