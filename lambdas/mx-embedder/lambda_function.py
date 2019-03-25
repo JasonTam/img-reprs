@@ -11,6 +11,7 @@ from decimal import Decimal
 
 W = 224
 H = 224
+BATCH_SIZE = 32
 
 s3 = boto3.client('s3')
 dynamodb = boto3.resource('dynamodb')
@@ -18,6 +19,10 @@ dynamodb = boto3.resource('dynamodb')
 DYNAMO_TABLE = 'img-reprs'
 DEFAULT_BUCKET = 'jason-garbage'
 DEFAULT_PREFIX = 'images'
+
+
+def batcher(seq, size):
+    return (seq[pos:pos + size] for pos in range(0, len(seq), size))
 
 
 def get_model(
@@ -60,14 +65,15 @@ def write_repr(img_id, repr_vec):
 
 
 def get_s3_img(bucket, key):
+    tic = datetime.now()
     response = s3.get_object(Bucket=bucket, Key=str(key))
     img_orig = Image.open(response['Body'])
-    print('img_orig size: ', img_orig.size)
+    # print('img_orig size: ', img_orig.size)
 
     img_arr = np.asarray(img_orig)
     print('img_arr shape: ', img_arr.shape)
 
-    print('Pre-processing image...')
+    print(f'[{datetime.now()-tic}] Pre-processing image...')
     img = mx.nd.array(img_arr)
     img = mx.image.imresize(img, W, H)  # resize
     img = img.transpose((2, 0, 1))  # Channel first
@@ -76,7 +82,8 @@ def get_s3_img(bucket, key):
 
 
 def process_imgs(imgs, img_ids):
-    print('Forward Inference...')
+    tic = datetime.now()
+    print(f'[{datetime.now()-tic}] Forward Inference...')
     feats = feat_model(nd.stack(*imgs, axis=0))
     resps = []
     for img_id, feat in zip(img_ids, feats):
@@ -84,7 +91,7 @@ def process_imgs(imgs, img_ids):
         feat_compat = [
             Decimal(str(x))
             for x in feat.squeeze().asnumpy().tolist()]
-        print('Writing reprs to db...')
+        print(f'[{datetime.now()-tic}] Writing reprs to db...')
         resp = write_repr(img_id, feat_compat)
         resps.append(resp)
     return resps
@@ -116,24 +123,40 @@ def process_record(record):
         img = get_s3_img(bucket, key)
         imgs.append(img)
         img_ids.append(key_base)
-    elif is_cw_trigger(record):
-        print('Scheduled CW event trigger')
-        resp = s3.list_objects(Bucket=DEFAULT_BUCKET, Prefix=DEFAULT_PREFIX)
-        for k in resp['Contents']:
-            if k['Size'] > 0:
-                key = Path(k['Key'])
-                key_name = key.name  # ex) 'cat.jpg'
-                key_base = key.stem  # ex) 'cat'
-                path_data = f's3://{bucket}/{key}'
-                print(f'Path: {path_data}')
-
-                img = get_s3_img(DEFAULT_BUCKET, key)
-                imgs.append(img)
-                img_ids.append(key_base)
     else:
         raise ValueError('Only s3 records supported')
 
     process_imgs(imgs, img_ids)
+
+
+def process_dir(bucket, prefix):
+
+    paginator = s3.get_paginator('list_objects')
+    ops_params = {'Bucket': bucket,
+                  'Prefix': prefix,
+                  # 'PaginationConfig': {'MaxItems': 100},
+                  }
+    page_iter = paginator.paginate(**ops_params)
+
+    print(f'Discovering keys in {bucket} / {prefix}')
+    keys = []
+    for page in page_iter:
+        for obj in page['Contents']:
+            if obj['Size'] > 0:
+                key = Path(obj['Key'])
+                keys.append(key)
+
+    # Batch Process the list of keys
+    for ii, batch in enumerate(batcher(keys, BATCH_SIZE)):
+        print(f'Processing batch {ii}')
+        imgs_batch = []
+        ids_batch = []
+        for key in batch:
+            img = get_s3_img(bucket, key)
+            imgs_batch.append(img)
+            ids_batch.append(key.stem)
+
+        process_imgs(imgs_batch, ids_batch)
 
 
 def lambda_handler(event, context):
@@ -144,7 +167,8 @@ def lambda_handler(event, context):
             # Note: typically, there is only 1 record
             process_record(record)
     elif is_cw_trigger(event):
-        process_record(event)
+        print('Scheduled CW event trigger')
+        process_dir(DEFAULT_BUCKET, DEFAULT_PREFIX)
 
     print(f'[{datetime.now()-tic}] Returning!')
     return {
