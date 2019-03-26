@@ -1,6 +1,6 @@
 
 FN_AWS_NAME='img-emb-test'
-FN_FILE_NAME='lambda_function.py'
+FN_SRC='src'
 ZIP_NAME='function.zip'
 
 pip_args := install \
@@ -17,8 +17,9 @@ install-libs:
 build:
 	cd package \
 	&& zip -r9 ../${ZIP_NAME} . \
-	&& cd ../ \
-	&& zip -g ${ZIP_NAME} ${FN_FILE_NAME}
+	&& cd ../${FN_SRC} \
+	&& zip -g ../${ZIP_NAME} ./* \
+	&& cd ..
 
 push-s3:
 	aws s3 cp \
