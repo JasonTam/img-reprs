@@ -50,7 +50,6 @@ def write_repr(dynamodb, table, img_id, repr_vec):
 
 
 def get_s3_img(s3, bucket, key):
-    tic = datetime.now()
     response = s3.get_object(Bucket=bucket, Key=str(key))
     img_orig = Image.open(response['Body'])
     # print('img_orig size: ', img_orig.size)
@@ -58,7 +57,6 @@ def get_s3_img(s3, bucket, key):
     img_arr = np.asarray(img_orig)
     print('img_arr shape: ', img_arr.shape)
 
-    print(f'[{datetime.now()-tic}] Pre-processing image...')
     img = mx.nd.array(img_arr)
     img = mx.image.imresize(img, W, H)  # resize
     img = img.transpose((2, 0, 1))  # Channel first
@@ -70,13 +68,15 @@ def process_imgs(imgs, img_ids, feat_model, dynamodb, table):
     tic = datetime.now()
     print(f'[{datetime.now()-tic}] Forward Inference...')
     feats = feat_model(nd.stack(*imgs, axis=0))
+    print(f'feats shape: {feats.shape}')
     resps = []
+    print(f'[{datetime.now()-tic}] Writing reprs to db...')
     for img_id, feat in zip(img_ids, feats):
-        # Consider batch write if we actually have huge batches
+        print(f'[{datetime.now()-tic}] Writing {img_id}...')
+        # TODO: batch write (otherwise, dynamo conn hiccups
         feat_compat = [
             Decimal(str(x))
             for x in feat.squeeze().asnumpy().tolist()]
-        print(f'[{datetime.now()-tic}] Writing reprs to db...')
         resp = write_repr(dynamodb, table, img_id, feat_compat)
         resps.append(resp)
     return resps

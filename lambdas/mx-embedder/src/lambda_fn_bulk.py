@@ -11,7 +11,7 @@ from common import (
     is_s3_trigger,
 )
 
-BATCH_SIZE = 32
+BATCH_SIZE = 128
 
 s3 = boto3.client('s3')
 dynamodb = boto3.resource('dynamodb')
@@ -61,6 +61,8 @@ def lambda_handler(event, context):
     if is_cw_trigger(event):
         print('Scheduled CW event trigger')
         process_dir(DEFAULT_BUCKET, DEFAULT_PREFIX)
+    else:
+        print('Only CW event trigger allowed -- exiting')
 
     print(f'[{datetime.now()-tic}] Returning!')
     return {
