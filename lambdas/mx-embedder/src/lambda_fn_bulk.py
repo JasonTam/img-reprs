@@ -25,29 +25,6 @@ print('Getting and cutting model...')
 feat_model = get_model()
 
 
-def process_record(record):
-    img_ids = []
-    imgs = []
-    if is_s3_trigger(record):
-        bucket = record['s3']['bucket']['name']
-        key = Path(record['s3']['object']['key'])
-        key_name = key.name  # ex) 'cat.jpg'
-        key_base = key.stem  # ex) 'cat'
-        path_data = f's3://{bucket}/{key}'
-        print(f'Bucket: {bucket}')
-        print(f'Key: {key}', '\t', f'Key name: {key_name}')
-        print(f'Path: {path_data}')
-
-        print(f'Streaming in image from S3...')
-        img = get_s3_img(s3, bucket, key)
-        imgs.append(img)
-        img_ids.append(key_base)
-    else:
-        raise ValueError('Only s3 records supported')
-
-    process_imgs(imgs, img_ids, feat_model, dynamodb, DYNAMO_TABLE)
-
-
 def process_dir(bucket, prefix):
 
     paginator = s3.get_paginator('list_objects')
@@ -81,11 +58,7 @@ def process_dir(bucket, prefix):
 def lambda_handler(event, context):
     tic = datetime.now()
 
-    if 'Records' in event:
-        for record in event['Records']:
-            # Note: typically, there is only 1 record
-            process_record(record)
-    elif is_cw_trigger(event):
+    if is_cw_trigger(event):
         print('Scheduled CW event trigger')
         process_dir(DEFAULT_BUCKET, DEFAULT_PREFIX)
 
