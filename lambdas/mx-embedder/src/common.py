@@ -49,6 +49,25 @@ def write_repr(dynamodb, table, img_id, repr_vec):
     return response
 
 
+def write_repr_batch(dynamodb, table, img_ids, repr_vecs):
+    tic = datetime.now()
+    table = dynamodb.Table(table)
+    items = [{
+        'id': img_id,
+        'repr': repr_vec,
+        'meta': {
+            'ts_updated': datetime.utcnow().isoformat(),
+        }
+    } for img_id, repr_vec in zip(img_ids, repr_vecs)]
+
+    with table.batch_writer() as batch:
+        for item in items:
+            print(f'[{datetime.now()-tic}] Batch Q {item["id"]}...')
+            batch.put_item(Item=item)
+
+    return 'Batch write queued'
+
+
 def get_s3_img(s3, bucket, key):
     response = s3.get_object(Bucket=bucket, Key=str(key))
     img_orig = Image.open(response['Body'])
@@ -71,14 +90,15 @@ def process_imgs(imgs, img_ids, feat_model, dynamodb, table):
     print(f'feats shape: {feats.shape}')
     resps = []
     print(f'[{datetime.now()-tic}] Writing reprs to db...')
-    for img_id, feat in zip(img_ids, feats):
-        print(f'[{datetime.now()-tic}] Writing {img_id}...')
-        # TODO: batch write (otherwise, dynamo conn hiccups
-        feat_compat = [
-            Decimal(str(x))
-            for x in feat.squeeze().asnumpy().tolist()]
-        resp = write_repr(dynamodb, table, img_id, feat_compat)
-        resps.append(resp)
+    feat_compats = [
+        [Decimal(str(x))
+         for x in feat.squeeze().asnumpy().tolist()]
+        for feat in feats
+    ]
+
+    resp = write_repr_batch(dynamodb, table,
+                            img_ids, feat_compats)
+    resps.append(resp)
     return resps
 
 
