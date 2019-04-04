@@ -73,8 +73,9 @@ def get_s3_img(s3, bucket, key):
     img_orig = Image.open(response['Body'])
     # print('img_orig size: ', img_orig.size)
 
-    img_arr = np.asarray(img_orig)
-    print('img_arr shape: ', img_arr.shape)
+    # Ensure there is no 4th alpha channel
+    img_arr = np.asarray(img_orig)[...,:3]
+    # print('img_arr shape: ', img_arr.shape)
 
     img = mx.nd.array(img_arr)
     img = mx.image.imresize(img, W, H)  # resize
