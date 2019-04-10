@@ -61,25 +61,40 @@ def write_repr_batch(dynamodb, table, img_ids, repr_vecs):
 
     with table.batch_writer() as batch:
         for item in items:
-            print(f'[{datetime.now()-tic}] Batch Q {item["id"]}...')
+            # print(f'[{datetime.now()-tic}] Batch Q {item["id"]}...')
             batch.put_item(Item=item)
 
     return 'Batch write queued'
+
+
+def pp_img_obj(img_orig: Image):
+    # print(f'image_orig size: {img_orig.size}')
+    img_arr = np.asarray(img_orig)
+    if len(img_arr.shape) == 3:
+        # Colored Image
+        # Ensure there is no 4th alpha channel
+        img_arr = img_arr[..., :3]
+    elif len(img_arr.shape) == 2:
+        # Gray-scale Image
+        # Tile to create fake color channels
+        img_arr = np.tile(np.atleast_3d(img_arr), 3)
+    else:
+        # Unknown shape... not sure how to handle
+        return None
+
+    # print(f'img_arr shape: {img_arr.shape}')
+    img = mx.nd.array(img_arr)
+    img = mx.image.imresize(img, W, H)  # resize
+    img = img.transpose((2, 0, 1))  # Channel first
+    img = img.astype('float32')
+    return img
 
 
 def get_s3_img(s3, bucket, key):
     response = s3.get_object(Bucket=bucket, Key=str(key))
     img_orig = Image.open(response['Body'])
     # print('img_orig size: ', img_orig.size)
-
-    # Ensure there is no 4th alpha channel
-    img_arr = np.asarray(img_orig)[...,:3]
-    # print('img_arr shape: ', img_arr.shape)
-
-    img = mx.nd.array(img_arr)
-    img = mx.image.imresize(img, W, H)  # resize
-    img = img.transpose((2, 0, 1))  # Channel first
-    img = img.astype('float32')  # for gpu context
+    img = pp_img_obj(img_orig)
     return img
 
 
