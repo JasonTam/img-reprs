@@ -4,7 +4,6 @@ from mxnet.gluon.model_zoo import vision
 import numpy as np
 from PIL import Image
 from datetime import datetime
-from decimal import Decimal
 
 W = 224
 H = 224
@@ -91,14 +90,11 @@ def process_imgs(imgs, img_ids, feat_model, dynamodb, table):
     print(f'feats shape: {feats.shape}')
     resps = []
     print(f'[{datetime.now()-tic}] Writing reprs to db...')
-    feat_compats = [
-        [Decimal(str(x))
-         for x in feat.squeeze().asnumpy().tolist()]
-        for feat in feats
-    ]
+    feat_bytes = [feat.squeeze().asnumpy().tobytes()
+                  for feat in feats]
 
     resp = write_repr_batch(dynamodb, table,
-                            img_ids, feat_compats)
+                            img_ids, feat_bytes)
     resps.append(resp)
     return resps
 
