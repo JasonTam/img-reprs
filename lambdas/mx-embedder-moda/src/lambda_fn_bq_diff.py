@@ -34,8 +34,9 @@ SELECT DISTINCT {id_col}
 , {img_url_col} 
 FROM `moda-operandi-dw.dw_production.dw__dim_sku` 
 WHERE product_primary_image != ''
+AND is_active = 'T'
 """
-
+# TODO: inactive products don't seem to have medium quality
 
 print('Getting and cutting model...')
 feat_model = get_model()
@@ -51,6 +52,8 @@ def run():
                 int(b) for b in f.read().splitlines())
     else:
         processed_ids = set()
+
+    print(f'{len(processed_ids)} existing ids')
 
     # BQ Img Urls
     client_bq = bq.Client()
